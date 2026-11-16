@@ -72,9 +72,9 @@ INCS = -IInc -ISrc \
 	-IDrivers/CMSIS/Device/ST/STM32F0xx/Include \
 	-IDrivers/CMSIS/Include
 
-CFLAGS  = $(MCU) -std=gnu11 -g -Os -ffunction-sections -fdata-sections -Wall -Wextra $(DEFS) $(INCS) -MMD -MP
+CFLAGS  = $(MCU) -std=gnu11 -g -Os -flto -ffunction-sections -fdata-sections -Wall -Wextra $(DEFS) $(INCS) -MMD -MP
 ASFLAGS = $(MCU) -g -x assembler-with-cpp
-LDFLAGS = $(MCU) -T$(LDSCRIPT) --specs=nosys.specs -static -Wl,--gc-sections \
+LDFLAGS = $(MCU) -flto -T$(LDSCRIPT) --specs=nosys.specs -static -Wl,--gc-sections \
 	-Wl,-Map=$(BUILD)/$(TARGET).map -Wl,--start-group -lc -lm -Wl,--end-group
 
 OBJS = $(addprefix $(BUILD)/,$(C_SRCS:.c=.o) $(S_SRCS:.s=.o))

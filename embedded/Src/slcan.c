@@ -30,6 +30,39 @@ extern USBD_HandleTypeDef hUsbDeviceFS;
 
 uint8_t sl_frame[LINE_MAXLEN];
 uint8_t sl_frame_len=0;
+
+/* RAW records carry arbitrary LIN-UART bytes without BREAK/SYNC/PID framing.
+ * The capture buffer is written by the UART IRQ and drained by the main loop
+ * after 3 ms of bus idle. */
+#define LIN_RAW_CAPTURE_SIZE 160
+#define LIN_RAW_REPORT_MAX 28
+static volatile uint8_t lin_raw_capture[LIN_RAW_CAPTURE_SIZE];
+static volatile uint8_t lin_raw_head = 0;
+static volatile uint8_t lin_raw_tail = 0;
+static volatile uint8_t lin_raw_overflow = 0;
+static volatile uint32_t lin_raw_last_tick = 0;
+
+void lin_raw_reset(void)
+{
+	lin_raw_head = 0;
+	lin_raw_tail = 0;
+	lin_raw_overflow = 0;
+	lin_raw_last_tick = 0;
+}
+
+void lin_raw_rx(uint8_t byte)
+{
+	if (lin_raw_head >= LIN_RAW_CAPTURE_SIZE)
+	{
+		lin_raw_overflow = 1;
+	}
+	else
+	{
+		lin_raw_capture[lin_raw_head] = byte;
+		lin_raw_head++;
+	}
+	lin_raw_last_tick = HAL_GetTick();
+}
 /**
   * @brief  Adds data to send buffer
   * @param  c - data to add
@@ -72,6 +105,47 @@ static void slcanOutputFlush(void)
     sl_frame_len = 0;
 }
 
+static void linRawOutputFlush(void)
+{
+	uint8_t count = 0;
+	uint8_t cursor;
+
+	if (lin_type != LIN_RAW || lin_raw_head == lin_raw_tail)
+		return;
+	if ((uint32_t)(HAL_GetTick() - lin_raw_last_tick) <= 3U)
+		return;
+
+	cursor = lin_raw_tail;
+	while ((cursor != lin_raw_head) && (count < LIN_RAW_REPORT_MAX))
+	{
+		cursor++;
+		count++;
+	}
+
+	slcanSetOutputChar('x');
+	slcanSetOutputAsHex(count);
+	while (count-- != 0U)
+	{
+		slcanSetOutputAsHex(lin_raw_capture[lin_raw_tail]);
+		lin_raw_tail++;
+	}
+	slcanSetOutputChar(terminator);
+	slcanOutputFlush();
+}
+
+static void linRawOverflowFlush(void)
+{
+	if (lin_type == LIN_RAW && lin_raw_overflow != 0U && lin_raw_head == lin_raw_tail)
+	{
+		lin_raw_overflow = 0;
+		slcanSetOutputChar('E');
+		slcanSetOutputChar('0');
+		slcanSetOutputChar('1');
+		slcanSetOutputChar(terminator);
+		slcanOutputFlush();
+	}
+}
+
 void slCanHandler(uint8_t time_passed_ms)
 {
     if (slcan_state == SLCAN_STATE_OPEN)
@@ -86,10 +160,10 @@ void slCanHandler(uint8_t time_passed_ms)
   * @param  ch - data to add
   * @retval None
   */
-static uint8_t command[LINE_MAXLEN];
+static uint8_t command[LINE_INPUT_MAXLEN];
 int slCanProccesInput(uint8_t ch)
 {
-	static uint8_t line[LINE_MAXLEN];
+	static uint8_t line[LINE_INPUT_MAXLEN];
 	static uint8_t linepos = 0;
 
     if (ch == SLCAN_CR) {
@@ -99,7 +173,7 @@ int slCanProccesInput(uint8_t ch)
         return 1;
     } else if (ch != SLCAN_LR) {
         line[linepos] = ch;
-        if (linepos < LINE_MAXLEN - 1) linepos++;
+		if (linepos < LINE_INPUT_MAXLEN - 1) linepos++;
     }
     return 0;
 }
@@ -192,6 +266,8 @@ void slCanCheckCommand()
 {
 	uint8_t result = SLCAN_BELL;
 	uint8_t *line = command;
+	linRawOutputFlush();
+	linRawOverflowFlush();
 
     switch (line[0]) {
     	case 0:
@@ -251,6 +327,17 @@ void slCanCheckCommand()
                 result = terminator;
             }
             break;
+		case 'q': // Query optional Tesla16 RAW extension
+			{
+				slcanSetOutputChar('q');
+				slcanSetOutputChar('R');
+				slcanSetOutputChar('A');
+				slcanSetOutputChar('W');
+				slcanSetOutputChar('0');
+				slcanSetOutputChar('1');
+				result = terminator;
+			}
+			break;
         case 'o':  // master mode
         case 'O':
             if (slcan_state == SLCAN_STATE_CONFIG)
@@ -283,7 +370,38 @@ void slCanCheckCommand()
             slcan_state = SLCAN_STATE_CONFIG;
             result = terminator;
             lin_type = LIN_MASTER;
+			lin_raw_reset();
             break;
+
+		case 'x': // xNN<NN raw bytes as hex>: transmit without BREAK/SYNC/PID
+			{
+				uint32_t length;
+				uint32_t value;
+				uint8_t raw[LIN_RAW_MAX_TX];
+				uint8_t i;
+				if (!parseHex(&line[1], 2, &length) || length == 0U || length > LIN_RAW_MAX_TX)
+					break;
+				if (line[3U + length * 2U] != 0)
+					break;
+				for (i = 0; i < length; i++)
+				{
+					if (!parseHex(&line[3U + i * 2U], 2, &value))
+						break;
+					raw[i] = (uint8_t)value;
+				}
+				if (i != length)
+					break;
+				lin_type = LIN_RAW;
+				slcan_state = SLCAN_STATE_OPEN;
+				lin_raw_reset();
+				open_lin_hw_reset();
+				if (open_lin_hw_tx_data(raw, (l_u8)length) == l_true)
+				{
+					slcanSetOutputChar('Z');
+					result = terminator;
+				}
+			}
+			break;
 
         case 'R':
         case 'r': // Transmit header

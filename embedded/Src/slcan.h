@@ -11,12 +11,14 @@
 #include "open_lin_slave_data_layer.h"
 
 #define VERSION_FIRMWARE_MAJOR 3
-#define VERSION_FIRMWARE_MINOR 8
+#define VERSION_FIRMWARE_MINOR 9
 
 #define VERSION_HARDWARE_MAJOR 0
 #define VERSION_HARDWARE_MINOR 1
 
 #define LINE_MAXLEN 62
+#define LINE_INPUT_MAXLEN 160
+#define LIN_RAW_MAX_TX 76
 #define MAX_SLAVES_COUNT 16
 #define LIN_SLAVE_SIGNALS 5
 
@@ -30,13 +32,16 @@ uint8_t slcanReciveCanFrame(open_lin_frame_slot_t *pRxMsg);
 int slCanProccesInput(uint8_t ch);
 void slCanCheckCommand();
 void slCanHandler(uint8_t time_passed_ms);
+void lin_raw_rx(uint8_t byte);
+void lin_raw_reset(void);
 
 uint8_t parseHex(uint8_t* line, uint8_t len, uint32_t* value) ;
 
 typedef enum {
     LIN_MASTER,
     LIN_MONITOR,
-	LIN_SLAVE
+	LIN_SLAVE,
+	LIN_RAW
 } LinType_t ;
 
 extern LinType_t lin_type;

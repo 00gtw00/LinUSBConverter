@@ -33,6 +33,7 @@ The LIN protocol implementation is based on [openLIN](https://github.com/open-LI
 - USB DFU bootloader for firmware updates
 - No proprietary drivers - Linux / macOS / Windows
 - **MCP server** so AI agents can sniff and reverse-engineer a LIN bus ([see below](#ai-agents-mcp-server))
+- **Fork extension:** bounded RAW UART transactions for Tesla 16 V BMS research ([protocol](doc/TESLA16_RAW.md))
 
 ---
 
@@ -122,6 +123,8 @@ All commands are ASCII terminated with CR (`0x0D`). Errors return `0x07` (BEL).
 | `C` | Close LIN port |
 | `Sx` | Baud: `S2` = 9600, others = 19200 |
 | `V` / `v` / `N` | Hardware / firmware version / serial number query |
+| `q` | Fork capability query; firmware 3.9 replies `qRAW01` |
+| `xNN<HEX>` | Fork RAW transaction: transmit exactly 1-76 UART bytes without BREAK/SYNC/PID; see [protocol](doc/TESLA16_RAW.md) |
 | `tiiildd...` | Transmit full header + data frame (id, length, data) |
 | `r0iil` | Header only request (slave answers) |
 | `r1ff0` | Master mode: start sending frames from schedule table |

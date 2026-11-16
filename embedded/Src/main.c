@@ -258,6 +258,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 		case LIN_MASTER:
 			open_lin_master_dl_rx(rbyte);
 			break;
+		case LIN_RAW:
+			lin_raw_rx(rbyte);
+			break;
 		case LIN_SLAVE:
 			open_lin_slave_rx_header(rbyte);
 		default: /* Monitor */
