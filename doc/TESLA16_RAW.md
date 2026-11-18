@@ -1,6 +1,6 @@
 # Bounded RAW extension
 
-This fork adds an experimental, bounded RAW transaction mode to firmware 3.10.
+This fork adds an experimental, bounded RAW transaction mode to firmware 3.11.
 It is intended for long request/response records used by the Tesla 16 V BMS
 bootloader, which do not fit the normal 8-byte LIN frame commands.
 
@@ -14,8 +14,9 @@ Commands use ASCII and end with CR (`0x0D`):
 
 | Command | Reply | Meaning |
 |---|---|---|
-| `v` | `v030A` | Fork firmware version 3.10 |
+| `v` | `v030B` | Fork firmware version 3.11 |
 | `q` | `qRAW02` | Bounded RAW plus adapter-timed probe is present |
+| `Q` | `pCCCCSS` | Last auto-probe TX count (`CCCC`) and state (`SS`) |
 
 ## RAW transaction
 
@@ -55,6 +56,10 @@ the following bounded sequence inside the adapter:
 also cancels it. This removes host USB/OS scheduling from a short target reset
 window; it does not interpret the stored bytes or add any target write service.
 
+`Q` is diagnostic and does not transmit on LIN. States are `00` idle, `01`
+armed, `02` active, `03` deadline reached, `04` UART TX error and `05`
+cancelled. The counter saturates at `FFFF` and is preserved after completion.
+
 ## Build
 
 The RAW extension enables LTO because STM32F042G4 has 16 KiB flash:
@@ -66,5 +71,5 @@ make
 ```
 
 The reference build uses GNU Tools for STM32 14.3.rel1. Hardware validation is
-still required for the new `X` handoff, echo timing, maximum response length,
-and recovery after overflow or a disconnected target.
+has confirmed the `X` handoff and ordinary echo. Target-specific boot response,
+maximum response length and recovery after overflow still require validation.

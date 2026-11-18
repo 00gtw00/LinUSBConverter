@@ -123,7 +123,8 @@ All commands are ASCII terminated with CR (`0x0D`). Errors return `0x07` (BEL).
 | `C` | Close LIN port |
 | `Sx` | Baud: `S2` = 9600, others = 19200 |
 | `V` / `v` / `N` | Hardware / firmware version / serial number query |
-| `q` | Fork capability query; firmware 3.10 replies `qRAW02` |
+| `q` | Fork capability query; firmware 3.11 replies `qRAW02` |
+| `Q` | Last adapter-timed probe count/state as `pCCCCSS` (no LIN transmit) |
 | `xNN<HEX>` | Fork RAW transaction: transmit exactly 1-76 UART bytes without BREAK/SYNC/PID; see [protocol](doc/TESLA16_RAW.md) |
 | `XNN<HEX>` | Arm an adapter-timed, bounded RAW probe after the next monitor transmit; `C` cancels it |
 | `tiiildd...` | Transmit full header + data frame (id, length, data) |

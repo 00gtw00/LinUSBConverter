@@ -39,6 +39,12 @@ uint8_t sl_frame_len=0;
 #define LIN_RAW_PROBE_INITIAL_DELAY_MS 1U
 #define LIN_RAW_PROBE_INTERVAL_MS 20U
 #define LIN_RAW_PROBE_DURATION_MS 25000U
+#define LIN_RAW_PROBE_IDLE 0U
+#define LIN_RAW_PROBE_ARMED 1U
+#define LIN_RAW_PROBE_ACTIVE 2U
+#define LIN_RAW_PROBE_DEADLINE 3U
+#define LIN_RAW_PROBE_TX_ERROR 4U
+#define LIN_RAW_PROBE_CANCELLED 5U
 static volatile uint8_t lin_raw_capture[LIN_RAW_CAPTURE_SIZE];
 static volatile uint8_t lin_raw_head = 0;
 static volatile uint8_t lin_raw_tail = 0;
@@ -50,6 +56,8 @@ static uint8_t lin_raw_probe_armed = 0;
 static uint8_t lin_raw_probe_active = 0;
 static uint32_t lin_raw_probe_next_tick = 0;
 static uint32_t lin_raw_probe_deadline = 0;
+static uint16_t lin_raw_probe_tx_count = 0;
+static uint8_t lin_raw_probe_state = LIN_RAW_PROBE_IDLE;
 
 void lin_raw_reset(void)
 {
@@ -234,6 +242,8 @@ static uint8_t parseRawPayload(uint8_t* line, uint8_t* raw, uint8_t* raw_len)
 
 static void linRawProbeCancel(void)
 {
+	if (lin_raw_probe_armed != 0U || lin_raw_probe_active != 0U)
+		lin_raw_probe_state = LIN_RAW_PROBE_CANCELLED;
 	lin_raw_probe_armed = 0;
 	lin_raw_probe_active = 0;
 	lin_raw_probe_len = 0;
@@ -249,6 +259,8 @@ static void linRawProbeStart(void)
 	lin_raw_probe_active = 1;
 	lin_raw_probe_next_tick = now + LIN_RAW_PROBE_INITIAL_DELAY_MS;
 	lin_raw_probe_deadline = now + LIN_RAW_PROBE_DURATION_MS;
+	lin_raw_probe_tx_count = 0;
+	lin_raw_probe_state = LIN_RAW_PROBE_ACTIVE;
 	lin_type = LIN_RAW;
 	slcan_state = SLCAN_STATE_OPEN;
 	lin_raw_reset();
@@ -265,6 +277,7 @@ static void linRawProbeHandler(void)
 	if ((int32_t)(now - lin_raw_probe_deadline) >= 0)
 	{
 		lin_raw_probe_active = 0;
+		lin_raw_probe_state = LIN_RAW_PROBE_DEADLINE;
 		return;
 	}
 	if ((int32_t)(now - lin_raw_probe_next_tick) < 0)
@@ -276,8 +289,11 @@ static void linRawProbeHandler(void)
 	if (open_lin_hw_tx_data(lin_raw_probe, lin_raw_probe_len) != l_true)
 	{
 		lin_raw_probe_active = 0;
+		lin_raw_probe_state = LIN_RAW_PROBE_TX_ERROR;
 		return;
 	}
+	if (lin_raw_probe_tx_count != 0xFFFFU)
+		lin_raw_probe_tx_count++;
 	lin_raw_probe_next_tick = now + LIN_RAW_PROBE_INTERVAL_MS;
 }
 
@@ -417,6 +433,15 @@ void slCanCheckCommand()
 				result = terminator;
 			}
 			break;
+		case 'Q': // Query last auto-probe: pCCCCSS (TX count, state)
+			{
+				slcanSetOutputChar('p');
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_tx_count >> 8));
+				slcanSetOutputAsHex((uint8_t)lin_raw_probe_tx_count);
+				slcanSetOutputAsHex(lin_raw_probe_state);
+				result = terminator;
+			}
+			break;
         case 'o':  // master mode
         case 'O':
             if (slcan_state == SLCAN_STATE_CONFIG)
@@ -484,6 +509,8 @@ void slCanCheckCommand()
 				lin_raw_probe_len = raw_len;
 				lin_raw_probe_armed = 1;
 				lin_raw_probe_active = 0;
+				lin_raw_probe_tx_count = 0;
+				lin_raw_probe_state = LIN_RAW_PROBE_ARMED;
 				slcanSetOutputChar('Z');
 				result = terminator;
 			}
