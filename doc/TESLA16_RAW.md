@@ -1,6 +1,6 @@
-# Tesla 16 V bounded RAW extension
+# Bounded RAW extension
 
-This fork adds an experimental, bounded RAW transaction mode to firmware 3.9.
+This fork adds an experimental, bounded RAW transaction mode to firmware 3.10.
 It is intended for long request/response records used by the Tesla 16 V BMS
 bootloader, which do not fit the normal 8-byte LIN frame commands.
 
@@ -14,8 +14,8 @@ Commands use ASCII and end with CR (`0x0D`):
 
 | Command | Reply | Meaning |
 |---|---|---|
-| `v` | `v0309` | Fork firmware version 3.9 |
-| `q` | `qRAW01` | Bounded RAW extension is present |
+| `v` | `v030A` | Fork firmware version 3.10 |
+| `q` | `qRAW02` | Bounded RAW plus adapter-timed probe is present |
 
 ## RAW transaction
 
@@ -39,6 +39,22 @@ overflowed, so the whole transaction must be rejected.
 Malformed commands, zero length, lengths above 76, trailing characters, or
 invalid hex return BEL (`0x07`) and do not transmit.
 
+## Adapter-timed probe
+
+`XNN<HEX>\r` validates and stores the same 1-76 byte RAW payload, but does not
+transmit it immediately. It is accepted only while monitor mode is open and
+replies `Z\r`. The next successfully transmitted monitor-mode LIN frame starts
+the following bounded sequence inside the adapter:
+
+- switch to RAW receive mode after the LIN frame has completed;
+- send the stored bytes first after 1 ms, then every 20 ms;
+- emit received bytes using the same `xNN<HEX>\r` records;
+- stop automatically after 25 seconds.
+
+`C\r` cancels an armed or active probe. An immediate lowercase `x` transaction
+also cancels it. This removes host USB/OS scheduling from a short target reset
+window; it does not interpret the stored bytes or add any target write service.
+
 ## Build
 
 The RAW extension enables LTO because STM32F042G4 has 16 KiB flash:
@@ -50,5 +66,5 @@ make
 ```
 
 The reference build uses GNU Tools for STM32 14.3.rel1. Hardware validation is
-still required for echo timing, maximum response length, and recovery after
-overflow or a disconnected target.
+still required for the new `X` handoff, echo timing, maximum response length,
+and recovery after overflow or a disconnected target.

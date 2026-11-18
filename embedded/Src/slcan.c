@@ -36,11 +36,20 @@ uint8_t sl_frame_len=0;
  * after 3 ms of bus idle. */
 #define LIN_RAW_CAPTURE_SIZE 160
 #define LIN_RAW_REPORT_MAX 28
+#define LIN_RAW_PROBE_INITIAL_DELAY_MS 1U
+#define LIN_RAW_PROBE_INTERVAL_MS 20U
+#define LIN_RAW_PROBE_DURATION_MS 25000U
 static volatile uint8_t lin_raw_capture[LIN_RAW_CAPTURE_SIZE];
 static volatile uint8_t lin_raw_head = 0;
 static volatile uint8_t lin_raw_tail = 0;
 static volatile uint8_t lin_raw_overflow = 0;
 static volatile uint32_t lin_raw_last_tick = 0;
+static uint8_t lin_raw_probe[LIN_RAW_MAX_TX];
+static uint8_t lin_raw_probe_len = 0;
+static uint8_t lin_raw_probe_armed = 0;
+static uint8_t lin_raw_probe_active = 0;
+static uint32_t lin_raw_probe_next_tick = 0;
+static uint32_t lin_raw_probe_deadline = 0;
 
 void lin_raw_reset(void)
 {
@@ -203,6 +212,75 @@ uint8_t parseHex(uint8_t* line, uint8_t len, uint32_t* value) {
     return 1;
 }
 
+static uint8_t parseRawPayload(uint8_t* line, uint8_t* raw, uint8_t* raw_len)
+{
+	uint32_t length;
+	uint32_t value;
+	uint8_t i;
+
+	if (!parseHex(&line[1], 2, &length) || length == 0U || length > LIN_RAW_MAX_TX)
+		return 0;
+	if (line[3U + length * 2U] != 0)
+		return 0;
+	for (i = 0; i < length; i++)
+	{
+		if (!parseHex(&line[3U + i * 2U], 2, &value))
+			return 0;
+		raw[i] = (uint8_t)value;
+	}
+	*raw_len = (uint8_t)length;
+	return 1;
+}
+
+static void linRawProbeCancel(void)
+{
+	lin_raw_probe_armed = 0;
+	lin_raw_probe_active = 0;
+	lin_raw_probe_len = 0;
+}
+
+static void linRawProbeStart(void)
+{
+	uint32_t now = HAL_GetTick();
+
+	if (lin_raw_probe_armed == 0U || lin_raw_probe_len == 0U)
+		return;
+	lin_raw_probe_armed = 0;
+	lin_raw_probe_active = 1;
+	lin_raw_probe_next_tick = now + LIN_RAW_PROBE_INITIAL_DELAY_MS;
+	lin_raw_probe_deadline = now + LIN_RAW_PROBE_DURATION_MS;
+	lin_type = LIN_RAW;
+	slcan_state = SLCAN_STATE_OPEN;
+	lin_raw_reset();
+	open_lin_hw_reset();
+}
+
+static void linRawProbeHandler(void)
+{
+	uint32_t now;
+
+	if (lin_raw_probe_active == 0U)
+		return;
+	now = HAL_GetTick();
+	if ((int32_t)(now - lin_raw_probe_deadline) >= 0)
+	{
+		lin_raw_probe_active = 0;
+		return;
+	}
+	if ((int32_t)(now - lin_raw_probe_next_tick) < 0)
+		return;
+	/* Do not overwrite a record which has not yet reached USB. */
+	if (lin_raw_head != lin_raw_tail)
+		return;
+	lin_raw_reset();
+	if (open_lin_hw_tx_data(lin_raw_probe, lin_raw_probe_len) != l_true)
+	{
+		lin_raw_probe_active = 0;
+		return;
+	}
+	lin_raw_probe_next_tick = now + LIN_RAW_PROBE_INTERVAL_MS;
+}
+
 
 /**
  * @brief  Interprets given line and transmit can message
@@ -268,6 +346,7 @@ void slCanCheckCommand()
 	uint8_t *line = command;
 	linRawOutputFlush();
 	linRawOverflowFlush();
+	linRawProbeHandler();
 
     switch (line[0]) {
     	case 0:
@@ -327,14 +406,14 @@ void slCanCheckCommand()
                 result = terminator;
             }
             break;
-		case 'q': // Query optional Tesla16 RAW extension
+		case 'q': // Query optional bounded RAW extension
 			{
 				slcanSetOutputChar('q');
 				slcanSetOutputChar('R');
 				slcanSetOutputChar('A');
 				slcanSetOutputChar('W');
 				slcanSetOutputChar('0');
-				slcanSetOutputChar('1');
+				slcanSetOutputChar('2');
 				result = terminator;
 			}
 			break;
@@ -367,6 +446,7 @@ void slCanCheckCommand()
             break;
 
         case 'C': // Close LIN channel
+			linRawProbeCancel();
             slcan_state = SLCAN_STATE_CONFIG;
             result = terminator;
             lin_type = LIN_MASTER;
@@ -375,31 +455,37 @@ void slCanCheckCommand()
 
 		case 'x': // xNN<NN raw bytes as hex>: transmit without BREAK/SYNC/PID
 			{
-				uint32_t length;
-				uint32_t value;
 				uint8_t raw[LIN_RAW_MAX_TX];
-				uint8_t i;
-				if (!parseHex(&line[1], 2, &length) || length == 0U || length > LIN_RAW_MAX_TX)
+				uint8_t raw_len;
+				if (!parseRawPayload(line, raw, &raw_len))
 					break;
-				if (line[3U + length * 2U] != 0)
-					break;
-				for (i = 0; i < length; i++)
-				{
-					if (!parseHex(&line[3U + i * 2U], 2, &value))
-						break;
-					raw[i] = (uint8_t)value;
-				}
-				if (i != length)
-					break;
+				linRawProbeCancel();
 				lin_type = LIN_RAW;
 				slcan_state = SLCAN_STATE_OPEN;
 				lin_raw_reset();
 				open_lin_hw_reset();
-				if (open_lin_hw_tx_data(raw, (l_u8)length) == l_true)
+				if (open_lin_hw_tx_data(raw, raw_len) == l_true)
 				{
 					slcanSetOutputChar('Z');
 					result = terminator;
 				}
+			}
+			break;
+
+		case 'X': // XNN<HEX>: arm repeated RAW bytes after next monitor transmit
+			{
+				uint8_t raw[LIN_RAW_MAX_TX];
+				uint8_t raw_len;
+				if (slcan_state != SLCAN_STATE_OPEN || lin_type != LIN_MONITOR)
+					break;
+				if (!parseRawPayload(line, raw, &raw_len))
+					break;
+				memcpy(lin_raw_probe, raw, raw_len);
+				lin_raw_probe_len = raw_len;
+				lin_raw_probe_armed = 1;
+				lin_raw_probe_active = 0;
+				slcanSetOutputChar('Z');
+				result = terminator;
 			}
 			break;
 
@@ -450,6 +536,7 @@ void slCanCheckCommand()
 	                        if (line[0] < 'Z') slcanSetOutputChar('Z');
 	                        else slcanSetOutputChar('z');
 	                        result = terminator;
+	                        linRawProbeStart();
 	                    }
 	                }
 					break;
