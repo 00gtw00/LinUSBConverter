@@ -21,6 +21,7 @@
 
 extern int32_t serialNumber;
 extern UART_HandleTypeDef huart1;
+extern uint8_t Uart2RxFifo;
 
 void RebootToBootloader();
 uint8_t slcan_state = SLCAN_STATE_CONFIG;
@@ -63,6 +64,8 @@ static volatile uint16_t lin_raw_probe_rx_count = 0;
 static volatile uint16_t lin_raw_probe_uart_error_count = 0;
 static volatile uint32_t lin_raw_probe_uart_error_mask = 0;
 static uint16_t lin_raw_probe_rx_low_after_tx_count = 0;
+static uint16_t lin_raw_probe_rx_rearm_count = 0;
+static uint16_t lin_raw_probe_rx_rearm_failure_count = 0;
 
 static uint8_t linRawAdvance(uint8_t cursor)
 {
@@ -290,6 +293,8 @@ static void linRawProbeStart(void)
 	lin_raw_probe_uart_error_count = 0;
 	lin_raw_probe_uart_error_mask = 0;
 	lin_raw_probe_rx_low_after_tx_count = 0;
+	lin_raw_probe_rx_rearm_count = 0;
+	lin_raw_probe_rx_rearm_failure_count = 0;
 	lin_type = LIN_RAW;
 	slcan_state = SLCAN_STATE_OPEN;
 	lin_raw_reset();
@@ -315,6 +320,20 @@ static void linRawProbeHandler(void)
 	if (lin_raw_head != lin_raw_tail)
 		return;
 	lin_raw_reset();
+	if (huart1.RxState == HAL_UART_STATE_READY)
+	{
+		__HAL_UART_CLEAR_FLAG(&huart1, UART_CLEAR_OREF | UART_CLEAR_FEF |
+			UART_CLEAR_NEF | UART_CLEAR_PEF);
+		if (HAL_UART_Receive_IT(&huart1, &Uart2RxFifo, 1) == HAL_OK)
+		{
+			if (lin_raw_probe_rx_rearm_count != 0xFFFFU)
+				lin_raw_probe_rx_rearm_count++;
+		}
+		else if (lin_raw_probe_rx_rearm_failure_count != 0xFFFFU)
+		{
+			lin_raw_probe_rx_rearm_failure_count++;
+		}
+	}
 	if (open_lin_hw_tx_data(lin_raw_probe, lin_raw_probe_len) != l_true)
 	{
 		lin_raw_probe_active = 0;
@@ -489,6 +508,10 @@ void slCanCheckCommand()
 				slcanSetOutputAsHex((uint8_t)lin_raw_probe_rx_low_after_tx_count);
 				slcanSetOutputAsHex((uint8_t)huart1.RxState);
 				slcanSetOutputAsHex(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_SET ? 1U : 0U);
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_rx_rearm_count >> 8));
+				slcanSetOutputAsHex((uint8_t)lin_raw_probe_rx_rearm_count);
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_rx_rearm_failure_count >> 8));
+				slcanSetOutputAsHex((uint8_t)lin_raw_probe_rx_rearm_failure_count);
 				result = terminator;
 			}
 			break;
