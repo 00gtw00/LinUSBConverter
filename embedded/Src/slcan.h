@@ -11,7 +11,7 @@
 #include "open_lin_slave_data_layer.h"
 
 #define VERSION_FIRMWARE_MAJOR 3
-#define VERSION_FIRMWARE_MINOR 11
+#define VERSION_FIRMWARE_MINOR 12
 
 #define VERSION_HARDWARE_MAJOR 0
 #define VERSION_HARDWARE_MINOR 1
@@ -33,6 +33,7 @@ int slCanProccesInput(uint8_t ch);
 void slCanCheckCommand();
 void slCanHandler(uint8_t time_passed_ms);
 void lin_raw_rx(uint8_t byte);
+void lin_raw_uart_error(uint32_t error_code);
 void lin_raw_reset(void);
 
 uint8_t parseHex(uint8_t* line, uint8_t len, uint32_t* value) ;

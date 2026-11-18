@@ -273,6 +273,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
+	if (lin_type == LIN_RAW)
+		lin_raw_uart_error(huart->ErrorCode);
 	/* On overrun HAL aborts the IT reception (UART_EndRxTransfer). It happens in slave mode
 	 * when the response echo arrives during the blocking transmit - restart reception,
 	 * otherwise the converter stays deaf until reopened. */

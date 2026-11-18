@@ -1,6 +1,6 @@
 # Bounded RAW extension
 
-This fork adds an experimental, bounded RAW transaction mode to firmware 3.11.
+This fork adds an experimental, bounded RAW transaction mode to firmware 3.12.
 It is intended for long request/response records used by the Tesla 16 V BMS
 bootloader, which do not fit the normal 8-byte LIN frame commands.
 
@@ -14,9 +14,10 @@ Commands use ASCII and end with CR (`0x0D`):
 
 | Command | Reply | Meaning |
 |---|---|---|
-| `v` | `v030B` | Fork firmware version 3.11 |
+| `v` | `v030C` | Fork firmware version 3.12 |
 | `q` | `qRAW02` | Bounded RAW plus adapter-timed probe is present |
 | `Q` | `pCCCCSS` | Last auto-probe TX count (`CCCC`) and state (`SS`) |
+| `D` | `dRRRREEEEFFFFFFFFLLLLSSPP` | Passive RX/error/line diagnostics |
 
 ## RAW transaction
 
@@ -59,6 +60,13 @@ window; it does not interpret the stored bytes or add any target write service.
 `Q` is diagnostic and does not transmit on LIN. States are `00` idle, `01`
 armed, `02` active, `03` deadline reached, `04` UART TX error and `05`
 cancelled. The counter saturates at `FFFF` and is preserved after completion.
+
+`D` is also non-transmitting. It reports received byte count (`RRRR`), UART
+error callback count (`EEEE`), OR-ed HAL error mask (`FFFFFFFF`), count of TX
+completions with RXD still low (`LLLL`), current HAL RX state (`SS`) and live
+RX pin (`PP`, `01` is recessive/high). The RAW RX queue is circular, so a
+drained queue remains reusable throughout a long probe; overflow is still
+reported fail-closed as `E01`.
 
 ## Build
 

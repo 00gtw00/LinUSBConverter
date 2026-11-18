@@ -20,6 +20,7 @@
 #define SLCAN_LR 10
 
 extern int32_t serialNumber;
+extern UART_HandleTypeDef huart1;
 
 void RebootToBootloader();
 uint8_t slcan_state = SLCAN_STATE_CONFIG;
@@ -58,6 +59,18 @@ static uint32_t lin_raw_probe_next_tick = 0;
 static uint32_t lin_raw_probe_deadline = 0;
 static uint16_t lin_raw_probe_tx_count = 0;
 static uint8_t lin_raw_probe_state = LIN_RAW_PROBE_IDLE;
+static volatile uint16_t lin_raw_probe_rx_count = 0;
+static volatile uint16_t lin_raw_probe_uart_error_count = 0;
+static volatile uint32_t lin_raw_probe_uart_error_mask = 0;
+static uint16_t lin_raw_probe_rx_low_after_tx_count = 0;
+
+static uint8_t linRawAdvance(uint8_t cursor)
+{
+	cursor++;
+	if (cursor >= LIN_RAW_CAPTURE_SIZE)
+		cursor = 0;
+	return cursor;
+}
 
 void lin_raw_reset(void)
 {
@@ -69,16 +82,28 @@ void lin_raw_reset(void)
 
 void lin_raw_rx(uint8_t byte)
 {
-	if (lin_raw_head >= LIN_RAW_CAPTURE_SIZE)
+	uint8_t next = linRawAdvance(lin_raw_head);
+	if (lin_raw_probe_active != 0U && lin_raw_probe_rx_count != 0xFFFFU)
+		lin_raw_probe_rx_count++;
+	if (next == lin_raw_tail)
 	{
 		lin_raw_overflow = 1;
 	}
 	else
 	{
 		lin_raw_capture[lin_raw_head] = byte;
-		lin_raw_head++;
+		lin_raw_head = next;
 	}
 	lin_raw_last_tick = HAL_GetTick();
+}
+
+void lin_raw_uart_error(uint32_t error_code)
+{
+	if (lin_raw_probe_active == 0U)
+		return;
+	if (lin_raw_probe_uart_error_count != 0xFFFFU)
+		lin_raw_probe_uart_error_count++;
+	lin_raw_probe_uart_error_mask |= error_code;
 }
 /**
   * @brief  Adds data to send buffer
@@ -135,7 +160,7 @@ static void linRawOutputFlush(void)
 	cursor = lin_raw_tail;
 	while ((cursor != lin_raw_head) && (count < LIN_RAW_REPORT_MAX))
 	{
-		cursor++;
+		cursor = linRawAdvance(cursor);
 		count++;
 	}
 
@@ -144,7 +169,7 @@ static void linRawOutputFlush(void)
 	while (count-- != 0U)
 	{
 		slcanSetOutputAsHex(lin_raw_capture[lin_raw_tail]);
-		lin_raw_tail++;
+		lin_raw_tail = linRawAdvance(lin_raw_tail);
 	}
 	slcanSetOutputChar(terminator);
 	slcanOutputFlush();
@@ -261,6 +286,10 @@ static void linRawProbeStart(void)
 	lin_raw_probe_deadline = now + LIN_RAW_PROBE_DURATION_MS;
 	lin_raw_probe_tx_count = 0;
 	lin_raw_probe_state = LIN_RAW_PROBE_ACTIVE;
+	lin_raw_probe_rx_count = 0;
+	lin_raw_probe_uart_error_count = 0;
+	lin_raw_probe_uart_error_mask = 0;
+	lin_raw_probe_rx_low_after_tx_count = 0;
 	lin_type = LIN_RAW;
 	slcan_state = SLCAN_STATE_OPEN;
 	lin_raw_reset();
@@ -294,6 +323,9 @@ static void linRawProbeHandler(void)
 	}
 	if (lin_raw_probe_tx_count != 0xFFFFU)
 		lin_raw_probe_tx_count++;
+	if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_RESET &&
+		lin_raw_probe_rx_low_after_tx_count != 0xFFFFU)
+		lin_raw_probe_rx_low_after_tx_count++;
 	lin_raw_probe_next_tick = now + LIN_RAW_PROBE_INTERVAL_MS;
 }
 
@@ -439,6 +471,24 @@ void slCanCheckCommand()
 				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_tx_count >> 8));
 				slcanSetOutputAsHex((uint8_t)lin_raw_probe_tx_count);
 				slcanSetOutputAsHex(lin_raw_probe_state);
+				result = terminator;
+			}
+			break;
+		case 'D': // Passive RAW diagnostics: RX, errors, error mask, low-after-TX, RX state/pin
+			{
+				slcanSetOutputChar('d');
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_rx_count >> 8));
+				slcanSetOutputAsHex((uint8_t)lin_raw_probe_rx_count);
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_uart_error_count >> 8));
+				slcanSetOutputAsHex((uint8_t)lin_raw_probe_uart_error_count);
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_uart_error_mask >> 24));
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_uart_error_mask >> 16));
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_uart_error_mask >> 8));
+				slcanSetOutputAsHex((uint8_t)lin_raw_probe_uart_error_mask);
+				slcanSetOutputAsHex((uint8_t)(lin_raw_probe_rx_low_after_tx_count >> 8));
+				slcanSetOutputAsHex((uint8_t)lin_raw_probe_rx_low_after_tx_count);
+				slcanSetOutputAsHex((uint8_t)huart1.RxState);
+				slcanSetOutputAsHex(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_SET ? 1U : 0U);
 				result = terminator;
 			}
 			break;
