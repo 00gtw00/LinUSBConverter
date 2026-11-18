@@ -140,6 +140,24 @@ extern uint8_t Uart2RxFifo;
 void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
+  if (lin_type == LIN_RAW)
+  {
+    uint32_t status = huart1.Instance->ISR;
+    uint32_t error = HAL_UART_ERROR_NONE;
+    if ((status & USART_ISR_PE) != 0U) error |= HAL_UART_ERROR_PE;
+    if ((status & USART_ISR_NE) != 0U) error |= HAL_UART_ERROR_NE;
+    if ((status & USART_ISR_FE) != 0U) error |= HAL_UART_ERROR_FE;
+    if ((status & USART_ISR_ORE) != 0U) error |= HAL_UART_ERROR_ORE;
+    if (error != HAL_UART_ERROR_NONE)
+    {
+      lin_raw_uart_error(error);
+      huart1.Instance->ICR = USART_ICR_PECF | USART_ICR_NCF |
+                             USART_ICR_FECF | USART_ICR_ORECF;
+    }
+    if ((status & USART_ISR_RXNE) != 0U)
+      lin_raw_rx((uint8_t)huart1.Instance->RDR);
+    return;
+  }
   /* USER CODE END USART1_IRQn 0 */
   HAL_UART_IRQHandler(&huart1);
   /* USER CODE BEGIN USART1_IRQn 1 */

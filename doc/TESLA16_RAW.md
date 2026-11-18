@@ -1,6 +1,6 @@
 # Bounded RAW extension
 
-This fork adds an experimental, bounded RAW transaction mode to firmware 3.13.
+This fork adds an experimental, bounded RAW transaction mode to firmware 3.14.
 It is intended for long request/response records used by the Tesla 16 V BMS
 bootloader, which do not fit the normal 8-byte LIN frame commands.
 
@@ -14,7 +14,7 @@ Commands use ASCII and end with CR (`0x0D`):
 
 | Command | Reply | Meaning |
 |---|---|---|
-| `v` | `v030D` | Fork firmware version 3.13 |
+| `v` | `v030E` | Fork firmware version 3.14 |
 | `q` | `qRAW02` | Bounded RAW plus adapter-timed probe is present |
 | `Q` | `pCCCCSS` | Last auto-probe TX count (`CCCC`) and state (`SS`) |
 | `D` | `dRRRREEEEFFFFFFFFLLLLSSPPAAAABBBB` | Passive RX/error/line/re-arm diagnostics |
@@ -70,6 +70,9 @@ reported fail-closed as `E01`.
 Firmware 3.13 appends successful (`AAAA`) and failed (`BBBB`) receiver re-arm
 counts. Before every autonomous TX it re-arms an unexpectedly READY UART RX;
 this addresses a full LIN-frame trigger that can leave one-byte reception idle.
+Firmware 3.14 handles RXNE directly while in RAW mode. This avoids HAL's
+single-byte receive state becoming READY during a blocking multi-byte transmit;
+scheduled LIN modes continue to use the unchanged HAL callback.
 
 ## Build
 
